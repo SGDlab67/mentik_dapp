@@ -1,0 +1,21 @@
+[toolchain]
+package_manager = "yarn"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.devnet]
+mentik_sol_pool = "56zRQzpWpV8VKDpnVQGjvtpyZb9NzS3ox8UJp97taRX1"
+
+[programs.localnet]
+mentik_sol_pool = "2hvbmB1te7gvdGnCViX4cEkFrVpvHYDCjB6BaWk725Yc"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "cargo test -p mentik-integration-tests && cargo test -p mentik_sol_pool"
+
+[hooks]

@@ -1,0 +1,19 @@
+[package]
+name = "mentik-integration-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dev-dependencies]
+mentik_sol_pool = { path = "../../programs/mentik_sol_pool" }
+anchor-lang = "1.0.0"
+litesvm = "0.10.0"
+solana-clock = "3.1.0"
+solana-message = "3.0.1"
+solana-transaction = "3.0.2"
+solana-signer = "3.0.0"
+solana-keypair = "3.0.1"
+solana-address = "2.2.1"
+solana-instruction = "3.4.0"
+spl-associated-token-account = "6.0.0"
+spl-token = "7.0.0"
