@@ -123,6 +123,10 @@
         {
           "name": "token_program",
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []
@@ -530,6 +534,11 @@
       "code": 6005,
       "name": "InvalidLockDuration",
       "msg": "Invalid lock duration"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidStakeAccount",
+      "msg": "Invalid stake account"
     }
   ],
   "types": [
