@@ -88,14 +88,21 @@ The pool must already be **initialized** on Devnet (usually done once by the tea
 ### Make a deposit
 
 1. Scroll to **Manage stake**.
-2. Enter an amount in **Deposit amount** (default is `0.1` SOL). Use an amount you still have after fees (e.g. if you have 2 SOL from the faucet, `0.5` or `1.0` is fine).
-3. Click **Deposit**.
-4. Review the transaction in your wallet popup and **Approve**.
+2. Choose a **Lock period** (optional):
+   - **Flexible** — withdraw anytime (default)
+   - **7-day lock** — withdraw blocked for 7 days from deposit
+   - **30-day lock** — withdraw blocked for 30 days from deposit
+3. Enter an amount in **Deposit amount** (default is `0.1` SOL). Use an amount you still have after fees (e.g. if you have 2 SOL from the faucet, `0.5` or `1.0` is fine).
+4. Click **Deposit**.
+5. Review the transaction in your wallet popup and **Approve**.
+
+**Lock note:** The lock applies to your **entire stake**, not just the new deposit. If you already have a timed lock, choosing Flexible on a later deposit does **not** unlock early.
 
 After success, you should see:
 
 - **Your stake** updated under the stat strip
 - **Pool share** and estimated **MENTIK / day** on the **Your position** card
+- **Lock status** on your position card (countdown if locked)
 - A status message with a link to the transaction on [Solana Explorer](https://explorer.solana.com/?cluster=devnet) (Devnet)
 
 ### What you are doing on-chain
@@ -112,6 +119,8 @@ Rewards accrue over time. You do not need to deposit again to earn.
 2. When you have claimable MENTIK, click **Claim MENTIK** on the **Your position** card.
 3. Approve the transaction. The first claim may also create your MENTIK token account.
 
+**Claim works even while your stake is locked** — only withdraw is blocked during a lock period.
+
 You can also use **↻ Sync reward index** on the global card to update the pool index (claiming also advances rewards).
 
 ---
@@ -119,6 +128,8 @@ You can also use **↻ Sync reward index** on the global card to update the pool
 ## Withdraw SOL (optional)
 
 Under **Manage stake**, enter an amount in **Withdraw amount** and click **Withdraw**. You can only withdraw up to your staked balance.
+
+If your stake is **locked**, the Withdraw button is disabled until the countdown on **Your position** reaches zero. Claiming MENTIK is still allowed.
 
 ---
 
@@ -133,6 +144,7 @@ Under **Manage stake**, enter an amount in **Withdraw amount** and click **Withd
 | **Awaiting init** | Click **Initialize pool** once (Devnet demo), then deposit |
 | Deposit button disabled | Connect wallet, ensure pool is **Live**, and wait if a previous tx is still pending |
 | Simulation failed | Lower deposit amount; confirm Devnet SOL balance; read the red status message at the bottom |
+| **Stake is locked** / withdraw disabled | Wait for the unlock countdown on **Your position**; claim still works |
 
 ---
 

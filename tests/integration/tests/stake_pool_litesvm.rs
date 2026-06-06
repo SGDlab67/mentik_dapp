@@ -6,7 +6,7 @@ use litesvm::LiteSVM;
 use mentik_sol_pool::{
     accounts, instruction,
     constants::{
-        DAILY_EMISSION, GLOBAL_SEED, LOCK_7_DAYS, MENTIK_MINT_SEED, MINT_AUTHORITY_SEED,
+        DAILY_EMISSION, GLOBAL_SEED, LOCK_30_DAYS, LOCK_7_DAYS, MENTIK_MINT_SEED, MINT_AUTHORITY_SEED,
         SOL_VAULT_SEED, STAKE_SEED,
     },
     ID,
@@ -113,6 +113,15 @@ fn init_pool(svm: &mut LiteSVM, authority: &Keypair) {
 }
 
 fn deposit(svm: &mut LiteSVM, user: &Keypair, lamports: u64, lock_seconds: u64) {
+    try_deposit(svm, user, lamports, lock_seconds).expect("deposit");
+}
+
+fn try_deposit(
+    svm: &mut LiteSVM,
+    user: &Keypair,
+    lamports: u64,
+    lock_seconds: u64,
+) -> Result<(), String> {
     let (global_state, _) = pda(&[GLOBAL_SEED]);
     let (sol_vault, _) = pda(&[SOL_VAULT_SEED]);
     let (stake_account, _) = pda(&[STAKE_SEED, signer_pk(user).as_ref()]);
@@ -134,7 +143,7 @@ fn deposit(svm: &mut LiteSVM, user: &Keypair, lamports: u64, lock_seconds: u64) 
         .data(),
     };
 
-    send(svm, user, &[user], ix).expect("deposit");
+    send(svm, user, &[user], ix)
 }
 
 fn withdraw(svm: &mut LiteSVM, user: &Keypair, lamports: u64) -> Result<(), String> {
@@ -352,4 +361,80 @@ fn stake_lock_blocks_withdraw_until_unlock() {
 
     deposit(&mut svm, &user, 100_000_000, 0);
     withdraw(&mut svm, &user, 50_000_000).expect("flexible deposit withdraw");
+}
+
+#[test]
+fn invalid_lock_duration_rejected() {
+    let mut svm = LiteSVM::new();
+    svm.add_program(program_address(), &read_program_bytes())
+        .unwrap();
+
+    let authority = Keypair::new();
+    let user = Keypair::new();
+    svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    svm.airdrop(&user.pubkey(), 10_000_000_000).unwrap();
+
+    init_pool(&mut svm, &authority);
+    let err = try_deposit(&mut svm, &user, 100_000_000, 999).unwrap_err();
+    assert!(
+        err.contains("6005") || err.to_lowercase().contains("invalidlockduration"),
+        "expected InvalidLockDuration, got: {err}"
+    );
+}
+
+#[test]
+fn claim_while_locked_succeeds() {
+    let mut svm = LiteSVM::new();
+    svm.add_program(program_address(), &read_program_bytes())
+        .unwrap();
+
+    let authority = Keypair::new();
+    let user = Keypair::new();
+    svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    svm.airdrop(&user.pubkey(), 10_000_000_000).unwrap();
+
+    init_pool(&mut svm, &authority);
+    deposit(&mut svm, &user, 1_000_000_000, LOCK_7_DAYS);
+
+    let stake = read_stake(&svm, &user);
+    assert!(
+        stake.locked_until > svm.get_sysvar::<Clock>().unix_timestamp,
+        "expected active lock"
+    );
+
+    warp_seconds(&mut svm, 86_400);
+    sync_pool(&mut svm, &authority);
+
+    let (mentik_mint, _) = pda(&[MENTIK_MINT_SEED]);
+    let mint_pk = Pubkey::from(mentik_mint.to_bytes());
+    let ata = create_ata(&mut svm, &user, &signer_pk(&user), &mint_pk);
+    claim(&mut svm, &user, ata);
+
+    assert!(
+        token_balance(&svm, ata) > 0,
+        "expected MENTIK minted while stake locked"
+    );
+}
+
+#[test]
+fn lock_extension_uses_max() {
+    let mut svm = LiteSVM::new();
+    svm.add_program(program_address(), &read_program_bytes())
+        .unwrap();
+
+    let authority = Keypair::new();
+    let user = Keypair::new();
+    svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    svm.airdrop(&user.pubkey(), 10_000_000_000).unwrap();
+
+    init_pool(&mut svm, &authority);
+    let now = svm.get_sysvar::<Clock>().unix_timestamp;
+    deposit(&mut svm, &user, 500_000_000, LOCK_7_DAYS);
+    let after_seven = read_stake(&svm, &user).locked_until;
+    assert_eq!(after_seven, now + LOCK_7_DAYS as i64);
+
+    deposit(&mut svm, &user, 100_000_000, LOCK_30_DAYS);
+    let after_thirty = read_stake(&svm, &user).locked_until;
+    assert_eq!(after_thirty, now + LOCK_30_DAYS as i64);
+    assert!(after_thirty > after_seven);
 }
