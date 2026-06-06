@@ -38,8 +38,12 @@ pub struct DepositSol<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<DepositSol>, amount: u64) -> Result<()> {
+pub fn handler(ctx: Context<DepositSol>, amount: u64, lock_seconds: u64) -> Result<()> {
     require!(amount > 0, PoolError::ZeroDeposit);
+    require!(
+        is_valid_lock_duration(lock_seconds),
+        PoolError::InvalidLockDuration
+    );
 
     let now = Clock::get()?.unix_timestamp;
     let global = &mut ctx.accounts.global_state;
@@ -52,6 +56,7 @@ pub fn handler(ctx: Context<DepositSol>, amount: u64) -> Result<()> {
         stake.sol_amount = 0;
         stake.reward_debt = 0;
         stake.pending_rewards = 0;
+        stake.locked_until = 0;
     } else {
         require_keys_eq!(stake.owner, ctx.accounts.user.key());
         settle_stake(stake, global)?;
@@ -82,6 +87,13 @@ pub fn handler(ctx: Context<DepositSol>, amount: u64) -> Result<()> {
         .ok_or(PoolError::MathOverflow)?
         .checked_div(ACC_PRECISION)
         .ok_or(PoolError::MathOverflow)?;
+
+    if lock_seconds > 0 {
+        let new_lock = now
+            .checked_add(lock_seconds as i64)
+            .ok_or(PoolError::MathOverflow)?;
+        stake.locked_until = stake.locked_until.max(new_lock);
+    }
 
     msg!("Deposited {} lamports; pool TVL {}", amount, global.total_staked);
     Ok(())

@@ -93,6 +93,7 @@ mod tests {
             sol_amount: 1_000_000_000,
             reward_debt: 0,
             pending_rewards: 0,
+            locked_until: 0,
         };
         let pending = pending_since_debt(&stake, &global).unwrap();
         assert_eq!(pending, DAILY_EMISSION as u64);
