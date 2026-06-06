@@ -295,6 +295,7 @@ export function PoolDashboard() {
             program.programId
           )[0],
           tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
         })
         .preInstructions([createAta])
         .rpc();

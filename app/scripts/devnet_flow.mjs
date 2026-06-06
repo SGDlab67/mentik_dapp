@@ -77,7 +77,7 @@ async function main() {
     console.log("\n✓ Pool already initialized");
   }
 
-  // Use a fresh user keypair so legacy stake accounts (pre-lock layout) do not block the flow.
+  // Use a fresh user keypair so the smoke test is repeatable without relying on prior devnet state.
   const user = Keypair.generate();
   const userStakeAccount = pda([Buffer.from("stake"), user.publicKey.toBuffer()]);
   console.log("\n→ fund test user", user.publicKey.toBase58());
@@ -140,6 +140,7 @@ async function main() {
       userMentikAta: ata,
       mintAuthority,
       tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
     })
     .instruction();
   tx.add(claimIx);

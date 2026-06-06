@@ -126,6 +126,7 @@ async function main() {
         userMentikAta: ata,
         mintAuthority,
         tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
       })
       .instruction();
     tx.add(claimIx);

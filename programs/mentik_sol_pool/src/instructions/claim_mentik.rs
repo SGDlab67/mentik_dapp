@@ -4,7 +4,9 @@ use anchor_spl::token::{mint_to, Mint, MintTo, Token, TokenAccount};
 use crate::constants::*;
 use crate::error::PoolError;
 use crate::rewards::{pending_since_debt, update_pool};
-use crate::state::{GlobalState, StakeAccount};
+use crate::state::{
+    ensure_stake_account_space, load_stake_account, save_stake_account, GlobalState,
+};
 
 #[derive(Accounts)]
 pub struct ClaimMentik<'info> {
@@ -18,13 +20,13 @@ pub struct ClaimMentik<'info> {
     )]
     pub global_state: Account<'info, GlobalState>,
 
+    /// CHECK: Loaded manually to support stake accounts created before lock fields existed.
     #[account(
         mut,
         seeds = [STAKE_SEED, user.key().as_ref()],
-        bump = stake_account.bump,
-        constraint = stake_account.owner == user.key() @ PoolError::InsufficientStake,
+        bump
     )]
-    pub stake_account: Account<'info, StakeAccount>,
+    pub stake_account: UncheckedAccount<'info>,
 
     #[account(
         mut,
@@ -49,6 +51,7 @@ pub struct ClaimMentik<'info> {
     pub mint_authority: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
 }
 
 pub fn handler(ctx: Context<ClaimMentik>) -> Result<()> {
@@ -56,8 +59,15 @@ pub fn handler(ctx: Context<ClaimMentik>) -> Result<()> {
     let global = &mut ctx.accounts.global_state;
     update_pool(global, now)?;
 
-    let stake = &mut ctx.accounts.stake_account;
-    let newly_accrued = pending_since_debt(stake, global)?;
+    let stake_info = ctx.accounts.stake_account.to_account_info();
+    let mut stake = load_stake_account(&stake_info)?.ok_or(PoolError::InsufficientStake)?;
+    require_keys_eq!(
+        stake.owner,
+        ctx.accounts.user.key(),
+        PoolError::InsufficientStake
+    );
+
+    let newly_accrued = pending_since_debt(&stake, global)?;
     let total_claim = stake
         .pending_rewards
         .checked_add(newly_accrued)
@@ -87,6 +97,17 @@ pub fn handler(ctx: Context<ClaimMentik>) -> Result<()> {
         .ok_or(PoolError::MathOverflow)?
         .checked_div(ACC_PRECISION)
         .ok_or(PoolError::MathOverflow)?;
+
+    let user_key = ctx.accounts.user.key();
+    let stake_signer_seeds: &[&[u8]] = &[STAKE_SEED, user_key.as_ref(), &[ctx.bumps.stake_account]];
+    ensure_stake_account_space(
+        &stake_info,
+        &ctx.accounts.user.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        ctx.program_id,
+        stake_signer_seeds,
+    )?;
+    save_stake_account(&stake_info, &stake)?;
 
     msg!("Claimed {} MENTIK base units", total_claim);
     Ok(())

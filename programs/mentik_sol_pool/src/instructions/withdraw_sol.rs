@@ -4,7 +4,9 @@ use anchor_lang::system_program::{transfer, Transfer};
 use crate::constants::*;
 use crate::error::PoolError;
 use crate::rewards::{settle_stake, update_pool};
-use crate::state::{GlobalState, StakeAccount};
+use crate::state::{
+    ensure_stake_account_space, load_stake_account, save_stake_account, GlobalState,
+};
 
 #[derive(Accounts)]
 pub struct WithdrawSol<'info> {
@@ -26,13 +28,13 @@ pub struct WithdrawSol<'info> {
     )]
     pub sol_vault: UncheckedAccount<'info>,
 
+    /// CHECK: Loaded manually to support stake accounts created before lock fields existed.
     #[account(
         mut,
         seeds = [STAKE_SEED, user.key().as_ref()],
-        bump = stake_account.bump,
-        constraint = stake_account.owner == user.key() @ PoolError::InsufficientStake,
+        bump
     )]
-    pub stake_account: Account<'info, StakeAccount>,
+    pub stake_account: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
 }
@@ -44,8 +46,14 @@ pub fn handler(ctx: Context<WithdrawSol>, amount: u64) -> Result<()> {
     let global = &mut ctx.accounts.global_state;
     update_pool(global, now)?;
 
-    let stake = &mut ctx.accounts.stake_account;
-    settle_stake(stake, global)?;
+    let stake_info = ctx.accounts.stake_account.to_account_info();
+    let mut stake = load_stake_account(&stake_info)?.ok_or(PoolError::InsufficientStake)?;
+    require_keys_eq!(
+        stake.owner,
+        ctx.accounts.user.key(),
+        PoolError::InsufficientStake
+    );
+    settle_stake(&mut stake, global)?;
 
     require!(
         stake.locked_until == 0 || now >= stake.locked_until,
@@ -70,7 +78,7 @@ pub fn handler(ctx: Context<WithdrawSol>, amount: u64) -> Result<()> {
         .ok_or(PoolError::MathOverflow)?;
 
     let vault_bump = ctx.bumps.sol_vault;
-    let signer_seeds: &[&[u8]] = &[SOL_VAULT_SEED, &[vault_bump]];
+    let vault_signer_seeds: &[&[u8]] = &[SOL_VAULT_SEED, &[vault_bump]];
 
     transfer(
         CpiContext::new_with_signer(
@@ -79,10 +87,21 @@ pub fn handler(ctx: Context<WithdrawSol>, amount: u64) -> Result<()> {
                 from: ctx.accounts.sol_vault.to_account_info(),
                 to: ctx.accounts.user.to_account_info(),
             },
-            &[signer_seeds],
+            &[vault_signer_seeds],
         ),
         amount,
     )?;
+
+    let user_key = ctx.accounts.user.key();
+    let stake_signer_seeds: &[&[u8]] = &[STAKE_SEED, user_key.as_ref(), &[ctx.bumps.stake_account]];
+    ensure_stake_account_space(
+        &stake_info,
+        &ctx.accounts.user.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        ctx.program_id,
+        stake_signer_seeds,
+    )?;
+    save_stake_account(&stake_info, &stake)?;
 
     msg!("Withdrew {} lamports", amount);
     Ok(())

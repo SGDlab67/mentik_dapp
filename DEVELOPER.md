@@ -28,7 +28,7 @@ Deposits accept an optional `lock_seconds` argument:
 
 While `locked_until > now`, **withdraw is blocked** on-chain (`StakeLocked`). **Claim** and **sync** are unaffected. Additional deposits with a non-zero tier extend the lock (never shorten an active lock).
 
-**Redeploy note:** `StakeAccount` gained an 8-byte `locked_until` field. After redeploying, existing stake PDAs (old layout) fail to deserialize — re-deposit alone is not enough. Options for devnet: deploy a new program ID, add a close/migration instruction, or manually close old stake accounts before re-staking.
+**Redeploy note:** `StakeAccount` gained an 8-byte `locked_until` field. The program accepts pre-lock stake PDAs as unlocked positions and resizes them to the current layout on the next successful deposit, withdraw, or claim.
 
 ## Program ID (devnet)
 

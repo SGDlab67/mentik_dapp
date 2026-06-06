@@ -4,7 +4,9 @@ use anchor_lang::system_program::{transfer, Transfer};
 use crate::constants::*;
 use crate::error::PoolError;
 use crate::rewards::{settle_stake, update_pool};
-use crate::state::{GlobalState, StakeAccount};
+use crate::state::{
+    ensure_stake_account_space, load_stake_account, save_stake_account, GlobalState, StakeAccount,
+};
 
 #[derive(Accounts)]
 pub struct DepositSol<'info> {
@@ -26,14 +28,13 @@ pub struct DepositSol<'info> {
     )]
     pub sol_vault: UncheckedAccount<'info>,
 
+    /// CHECK: Loaded manually to support stake accounts created before lock fields existed.
     #[account(
-        init_if_needed,
-        payer = user,
-        space = 8 + StakeAccount::INIT_SPACE,
+        mut,
         seeds = [STAKE_SEED, user.key().as_ref()],
         bump
     )]
-    pub stake_account: Account<'info, StakeAccount>,
+    pub stake_account: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
 }
@@ -49,7 +50,16 @@ pub fn handler(ctx: Context<DepositSol>, amount: u64, lock_seconds: u64) -> Resu
     let global = &mut ctx.accounts.global_state;
     update_pool(global, now)?;
 
-    let stake = &mut ctx.accounts.stake_account;
+    let stake_info = ctx.accounts.stake_account.to_account_info();
+    let mut stake = load_stake_account(&stake_info)?.unwrap_or(StakeAccount {
+        bump: ctx.bumps.stake_account,
+        owner: Pubkey::default(),
+        sol_amount: 0,
+        reward_debt: 0,
+        pending_rewards: 0,
+        locked_until: 0,
+    });
+
     if stake.owner == Pubkey::default() {
         stake.bump = ctx.bumps.stake_account;
         stake.owner = ctx.accounts.user.key();
@@ -58,8 +68,12 @@ pub fn handler(ctx: Context<DepositSol>, amount: u64, lock_seconds: u64) -> Resu
         stake.pending_rewards = 0;
         stake.locked_until = 0;
     } else {
-        require_keys_eq!(stake.owner, ctx.accounts.user.key());
-        settle_stake(stake, global)?;
+        require_keys_eq!(
+            stake.owner,
+            ctx.accounts.user.key(),
+            PoolError::InsufficientStake
+        );
+        settle_stake(&mut stake, global)?;
     }
 
     transfer(
@@ -95,6 +109,21 @@ pub fn handler(ctx: Context<DepositSol>, amount: u64, lock_seconds: u64) -> Resu
         stake.locked_until = stake.locked_until.max(new_lock);
     }
 
-    msg!("Deposited {} lamports; pool TVL {}", amount, global.total_staked);
+    let user_key = ctx.accounts.user.key();
+    let signer_seeds: &[&[u8]] = &[STAKE_SEED, user_key.as_ref(), &[ctx.bumps.stake_account]];
+    ensure_stake_account_space(
+        &stake_info,
+        &ctx.accounts.user.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        ctx.program_id,
+        signer_seeds,
+    )?;
+    save_stake_account(&stake_info, &stake)?;
+
+    msg!(
+        "Deposited {} lamports; pool TVL {}",
+        amount,
+        global.total_staked
+    );
     Ok(())
 }

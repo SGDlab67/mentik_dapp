@@ -1,16 +1,19 @@
 use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::pubkey::Pubkey;
-use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
-use mentik_sol_pool::state::{GlobalState, StakeAccount};
-use litesvm::LiteSVM;
-use mentik_sol_pool::{
-    accounts, instruction,
-    constants::{
-        DAILY_EMISSION, GLOBAL_SEED, LOCK_30_DAYS, LOCK_7_DAYS, MENTIK_MINT_SEED, MINT_AUTHORITY_SEED,
-        SOL_VAULT_SEED, STAKE_SEED,
-    },
-    ID,
+use anchor_lang::{
+    AccountDeserialize, AccountSerialize, Discriminator, InstructionData, Space, ToAccountMetas,
 };
+use litesvm::LiteSVM;
+use mentik_sol_pool::state::{GlobalState, StakeAccount};
+use mentik_sol_pool::{
+    accounts,
+    constants::{
+        ACC_PRECISION, DAILY_EMISSION, GLOBAL_SEED, LOCK_30_DAYS, LOCK_7_DAYS, MENTIK_MINT_SEED,
+        MINT_AUTHORITY_SEED, SOL_VAULT_SEED, STAKE_SEED,
+    },
+    instruction, ID,
+};
+use solana_account::Account;
 use solana_address::Address;
 use solana_clock::Clock;
 use solana_keypair::Keypair;
@@ -203,8 +206,8 @@ fn create_ata(svm: &mut LiteSVM, payer: &Keypair, owner: &Pubkey, mint: &Pubkey)
     svm.expire_blockhash();
     let blockhash = svm.latest_blockhash();
     let msg = Message::new_with_blockhash(&[ix], Some(&payer.pubkey()), &blockhash);
-    let tx = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[payer])
-        .expect("ata tx");
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[payer]).expect("ata tx");
     svm.send_transaction(tx).expect("create ata");
     ata_addr
 }
@@ -225,6 +228,7 @@ fn claim(svm: &mut LiteSVM, user: &Keypair, ata: Address) {
             user_mentik_ata: ata,
             mint_authority,
             token_program: TOKEN_PROGRAM,
+            system_program: SYSTEM_PROGRAM,
         }
         .to_account_metas(None),
         data: instruction::ClaimMentik {}.data(),
@@ -244,6 +248,75 @@ fn read_stake(svm: &LiteSVM, user: &Keypair) -> StakeAccount {
     let acc = svm.get_account(&stake).expect("stake");
     let mut data: &[u8] = &acc.data;
     StakeAccount::try_deserialize(&mut data).expect("deserialize stake")
+}
+
+fn write_global(svm: &mut LiteSVM, global: &GlobalState) {
+    let (global_addr, _) = pda(&[GLOBAL_SEED]);
+    let existing = svm.get_account(&global_addr).expect("global");
+    let mut data = Vec::new();
+    global.try_serialize(&mut data).expect("serialize global");
+    svm.set_account(
+        global_addr,
+        Account {
+            lamports: existing.lamports,
+            data,
+            owner: program_address(),
+            executable: false,
+            rent_epoch: existing.rent_epoch,
+        },
+    )
+    .expect("write global");
+}
+
+fn legacy_stake_data(
+    bump: u8,
+    owner: Pubkey,
+    sol_amount: u64,
+    reward_debt: u128,
+    pending_rewards: u64,
+) -> Vec<u8> {
+    let mut data = Vec::with_capacity(8 + 1 + 32 + 8 + 16 + 8);
+    data.extend_from_slice(StakeAccount::DISCRIMINATOR);
+    data.push(bump);
+    data.extend_from_slice(owner.as_ref());
+    data.extend_from_slice(&sol_amount.to_le_bytes());
+    data.extend_from_slice(&reward_debt.to_le_bytes());
+    data.extend_from_slice(&pending_rewards.to_le_bytes());
+    data
+}
+
+fn seed_legacy_position(svm: &mut LiteSVM, user: &Keypair, lamports: u64) -> Address {
+    let mut global = read_global(svm);
+    global.total_staked = lamports;
+    write_global(svm, &global);
+
+    let (stake_addr, stake_bump) = pda(&[STAKE_SEED, signer_pk(user).as_ref()]);
+    svm.set_account(
+        stake_addr,
+        Account {
+            lamports: 1,
+            data: legacy_stake_data(stake_bump, signer_pk(user), lamports, 0, 0),
+            owner: program_address(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("seed legacy stake");
+
+    let (sol_vault, _) = pda(&[SOL_VAULT_SEED]);
+    svm.set_account(
+        sol_vault,
+        Account {
+            lamports,
+            data: vec![],
+            owner: SYSTEM_PROGRAM,
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+    .expect("seed vault");
+
+    stake_addr
 }
 
 fn token_balance(svm: &LiteSVM, ata: Address) -> u64 {
@@ -364,6 +437,48 @@ fn stake_lock_blocks_withdraw_until_unlock() {
 }
 
 #[test]
+fn legacy_stake_account_can_withdraw_after_lock_upgrade() {
+    let mut svm = LiteSVM::new();
+    svm.add_program(program_address(), &read_program_bytes())
+        .unwrap();
+
+    let authority = Keypair::new();
+    let user = Keypair::new();
+    svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    svm.airdrop(&user.pubkey(), 10_000_000_000).unwrap();
+
+    init_pool(&mut svm, &authority);
+    let legacy_lamports = 1_000_000_000;
+    let stake_addr = seed_legacy_position(&mut svm, &user, legacy_lamports);
+    assert_eq!(
+        svm.get_account(&stake_addr)
+            .expect("legacy stake")
+            .data
+            .len(),
+        8 + 1 + 32 + 8 + 16 + 8,
+        "test setup should use the pre-lock stake layout"
+    );
+
+    withdraw(&mut svm, &user, 250_000_000).expect("withdraw from legacy stake");
+
+    let migrated = read_stake(&svm, &user);
+    assert_eq!(migrated.sol_amount, legacy_lamports - 250_000_000);
+    assert_eq!(migrated.locked_until, 0);
+    assert_eq!(
+        svm.get_account(&stake_addr)
+            .expect("migrated stake")
+            .data
+            .len(),
+        8 + StakeAccount::INIT_SPACE,
+        "legacy account should be resized to the current layout"
+    );
+    assert_eq!(
+        read_global(&svm).total_staked,
+        legacy_lamports - 250_000_000
+    );
+}
+
+#[test]
 fn invalid_lock_duration_rejected() {
     let mut svm = LiteSVM::new();
     svm.add_program(program_address(), &read_program_bytes())
@@ -413,6 +528,43 @@ fn claim_while_locked_succeeds() {
     assert!(
         token_balance(&svm, ata) > 0,
         "expected MENTIK minted while stake locked"
+    );
+}
+
+#[test]
+fn legacy_stake_account_can_claim_after_lock_upgrade() {
+    let mut svm = LiteSVM::new();
+    svm.add_program(program_address(), &read_program_bytes())
+        .unwrap();
+
+    let authority = Keypair::new();
+    let user = Keypair::new();
+    svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    svm.airdrop(&user.pubkey(), 10_000_000_000).unwrap();
+
+    init_pool(&mut svm, &authority);
+    let legacy_lamports = 1_000_000_000;
+    let stake_addr = seed_legacy_position(&mut svm, &user, legacy_lamports);
+
+    let mut global = read_global(&svm);
+    global.reward_per_lamport = ACC_PRECISION;
+    write_global(&mut svm, &global);
+
+    let (mentik_mint, _) = pda(&[MENTIK_MINT_SEED]);
+    let mint_pk = Pubkey::from(mentik_mint.to_bytes());
+    let ata = create_ata(&mut svm, &user, &signer_pk(&user), &mint_pk);
+    claim(&mut svm, &user, ata);
+
+    assert_eq!(token_balance(&svm, ata), legacy_lamports);
+    let migrated = read_stake(&svm, &user);
+    assert_eq!(migrated.pending_rewards, 0);
+    assert_eq!(migrated.reward_debt, legacy_lamports as u128);
+    assert_eq!(
+        svm.get_account(&stake_addr)
+            .expect("migrated stake")
+            .data
+            .len(),
+        8 + StakeAccount::INIT_SPACE
     );
 }
 
