@@ -81,7 +81,7 @@ async function main() {
   const depositLamports = Math.floor(0.1 * LAMPORTS_PER_SOL);
   console.log("\n→ deposit_sol", depositLamports);
   const depSig = await program.methods
-    .depositSol(new BN(depositLamports))
+    .depositSol(new BN(depositLamports), new BN(0))
     .accountsPartial({
       user: wallet.publicKey,
       globalState,

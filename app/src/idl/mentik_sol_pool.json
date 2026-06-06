@@ -217,6 +217,10 @@
         {
           "name": "amount",
           "type": "u64"
+        },
+        {
+          "name": "lock_seconds",
+          "type": "u64"
         }
       ]
     },
@@ -516,6 +520,16 @@
       "code": 6003,
       "name": "MathOverflow",
       "msg": "Math overflow"
+    },
+    {
+      "code": 6004,
+      "name": "StakeLocked",
+      "msg": "Stake is locked until unlock time"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidLockDuration",
+      "msg": "Invalid lock duration"
     }
   ],
   "types": [
@@ -578,6 +592,13 @@
               "Accrued MENTIK (base units) not yet claimed; settled on deposit/withdraw."
             ],
             "type": "u64"
+          },
+          {
+            "name": "locked_until",
+            "docs": [
+              "Unix timestamp when withdraw is allowed; 0 = no lock."
+            ],
+            "type": "i64"
           }
         ]
       }

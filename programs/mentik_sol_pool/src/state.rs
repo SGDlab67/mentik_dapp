@@ -20,4 +20,6 @@ pub struct StakeAccount {
     pub reward_debt: u128,
     /// Accrued MENTIK (base units) not yet claimed; settled on deposit/withdraw.
     pub pending_rewards: u64,
+    /// Unix timestamp when withdraw is allowed; 0 = no lock.
+    pub locked_until: i64,
 }

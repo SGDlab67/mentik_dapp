@@ -5,7 +5,7 @@ Solana devnet dApp: deposit **SOL**, earn **MENTIK** from a **fixed 1,000 MENTIK
 ## Architecture
 
 - **Anchor program** (`programs/mentik_sol_pool`): MasterChef-style `reward_per_lamport` index, SOL vault PDA, MENTIK mint authority PDA.
-- **Instructions**: `initialize`, `deposit_sol`, `withdraw_sol`, `claim_mentik`, `sync_pool`
+- **Instructions**: `initialize`, `deposit_sol(amount, lock_seconds)`, `withdraw_sol`, `claim_mentik`, `sync_pool`
 - **Next.js UI** (`app/`): wallet connect, pool TVL, share %, pending rewards, deposit / withdraw / claim (simulate before send).
 
 ### Emission math
@@ -15,6 +15,20 @@ user_daily_mentik = 1000 * user_lamports / total_lamports
 ```
 
 When `total_staked == 0`, the index does not advance (no mint).
+
+### Stake lock periods
+
+Deposits accept an optional `lock_seconds` argument:
+
+| Tier | Seconds | Behavior |
+|------|---------|----------|
+| Flexible | `0` | No new lock; existing lock unchanged |
+| 7-day | `604_800` | `locked_until = max(current, now + 7d)` |
+| 30-day | `2_592_000` | `locked_until = max(current, now + 30d)` |
+
+While `locked_until > now`, **withdraw is blocked** on-chain (`StakeLocked`). **Claim** and **sync** are unaffected. Additional deposits with a non-zero tier extend the lock (never shorten an active lock).
+
+**Redeploy note:** `StakeAccount` gained an 8-byte `locked_until` field. After redeploying, existing stake PDAs (old layout) fail to deserialize — re-deposit alone is not enough. Options for devnet: deploy a new program ID, add a close/migration instruction, or manually close old stake accounts before re-staking.
 
 ## Program ID (devnet)
 
@@ -48,6 +62,7 @@ Tests cover:
 
 - Single staker ≈ 1,000 MENTIK after 24h
 - Two equal stakers ≈ 500 MENTIK each after 24h
+- 7-day lock blocks withdraw until unlock; flexible deposits withdraw immediately
 
 ### 3. Deploy to devnet (required once)
 

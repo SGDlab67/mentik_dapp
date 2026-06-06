@@ -47,6 +47,11 @@ pub fn handler(ctx: Context<WithdrawSol>, amount: u64) -> Result<()> {
     let stake = &mut ctx.accounts.stake_account;
     settle_stake(stake, global)?;
 
+    require!(
+        stake.locked_until == 0 || now >= stake.locked_until,
+        PoolError::StakeLocked
+    );
+
     require!(stake.sol_amount >= amount, PoolError::InsufficientStake);
 
     stake.sol_amount = stake

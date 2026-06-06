@@ -32,6 +32,10 @@ export function parseAnchorError(err: unknown): string {
       return "Nothing to claim yet — wait for rewards to accrue.";
     if (msg.includes("0x1771") || msg.includes("6001"))
       return "Insufficient staked SOL for this withdrawal.";
+    if (msg.includes("0x1774") || msg.includes("6004"))
+      return "Stake is locked — withdraw is blocked until the unlock time.";
+    if (msg.includes("0x1775") || msg.includes("6005"))
+      return "Invalid lock duration — choose Flexible, 7-day, or 30-day.";
     return msg;
   }
   return String(err);

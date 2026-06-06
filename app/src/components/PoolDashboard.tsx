@@ -15,6 +15,9 @@ import {
   ACC_PRECISION,
   DAILY_EMISSION_MENTIK,
   LAMPORTS_PER_SOL as LPS,
+  LOCK_30_DAYS,
+  LOCK_7_DAYS,
+  LOCK_NONE,
   MENTIK_DECIMALS,
   PROGRAM_ID,
 } from "@/lib/constants";
@@ -38,7 +41,31 @@ type StakeState = {
   solAmount: BN;
   rewardDebt: BN;
   pendingRewards: BN;
+  lockedUntil: BN;
 };
+
+type LockTier = "flexible" | "7d" | "30d";
+
+function lockSecondsForTier(tier: LockTier): number {
+  switch (tier) {
+    case "7d":
+      return LOCK_7_DAYS;
+    case "30d":
+      return LOCK_30_DAYS;
+    default:
+      return LOCK_NONE;
+  }
+}
+
+function formatLockRemaining(seconds: number): string {
+  const days = Math.floor(seconds / 86_400);
+  const hours = Math.floor((seconds % 86_400) / 3_600);
+  const mins = Math.floor((seconds % 3_600) / 60);
+  const secs = seconds % 60;
+  if (days > 0) return `${days}d ${hours}h ${mins}m`;
+  if (hours > 0) return `${hours}h ${mins}m ${secs}s`;
+  return `${mins}m ${secs}s`;
+}
 
 function SolLogo() {
   return (
@@ -61,6 +88,8 @@ export function PoolDashboard() {
   const [programLive, setProgramLive] = useState<boolean | null>(null);
   const [depositSol, setDepositSol] = useState("0.1");
   const [withdrawSol, setWithdrawSol] = useState("0.05");
+  const [lockTier, setLockTier] = useState<LockTier>("flexible");
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -102,11 +131,13 @@ export function PoolDashboard() {
         solAmount: BN;
         rewardDebt: BN;
         pendingRewards: BN;
+        lockedUntil: BN;
       };
       setStake({
         solAmount: s.solAmount,
         rewardDebt: s.rewardDebt,
         pendingRewards: s.pendingRewards,
+        lockedUntil: s.lockedUntil ?? new BN(0),
       });
     } catch {
       setStake(null);
@@ -118,6 +149,16 @@ export function PoolDashboard() {
     const id = setInterval(refresh, 12_000);
     return () => clearInterval(id);
   }, [refresh]);
+
+  const lockedUntilSec = stake ? Number(stake.lockedUntil.toString()) : 0;
+  const isLocked = lockedUntilSec > 0 && lockedUntilSec > nowSec;
+  const lockRemainingSec = isLocked ? lockedUntilSec - nowSec : 0;
+
+  useEffect(() => {
+    if (!isLocked) return;
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [isLocked, lockedUntilSec]);
 
   const pendingMentik = useMemo(() => {
     if (!global || !stake || stake.solAmount.isZero()) return 0n;
@@ -195,8 +236,9 @@ export function PoolDashboard() {
       const lamports = Math.floor(parseFloat(depositSol) * LPS);
       if (!Number.isFinite(lamports) || lamports <= 0) throw new Error("Invalid deposit amount");
       const program = programForTx();
+      const lockSeconds = lockSecondsForTier(lockTier);
       return program.methods
-        .depositSol(new BN(lamports))
+        .depositSol(new BN(lamports), new BN(lockSeconds))
         .accountsPartial({
           user: wallet.publicKey!,
           globalState: globalStatePda(),
@@ -209,6 +251,11 @@ export function PoolDashboard() {
 
   const withdraw = () =>
     runRpc("Withdraw SOL", async () => {
+      if (isLocked) {
+        throw new Error(
+          `Stake is locked — unlocks in ${formatLockRemaining(lockRemainingSec)}`
+        );
+      }
       const lamports = Math.floor(parseFloat(withdrawSol) * LPS);
       if (!Number.isFinite(lamports) || lamports <= 0) throw new Error("Invalid withdraw amount");
       const program = programForTx();
@@ -412,6 +459,16 @@ export function PoolDashboard() {
                   </span>
                 </dd>
               </div>
+              <div className="metric">
+                <dt>Lock status</dt>
+                <dd>
+                  {isLocked
+                    ? `Unlocks in ${formatLockRemaining(lockRemainingSec)}`
+                    : lockedUntilSec > 0
+                      ? "Unlocked (lock expired)"
+                      : "No lock"}
+                </dd>
+              </div>
             </dl>
             <button
               className="btn-primary"
@@ -430,6 +487,40 @@ export function PoolDashboard() {
               <span className="card-icon">⇄</span>
               Manage stake
             </h3>
+          </div>
+          <div className="action-row" style={{ gridTemplateColumns: "1fr" }}>
+            <label>
+              Lock period
+              <select
+                value={lockTier}
+                onChange={(e) => setLockTier(e.target.value as LockTier)}
+                disabled={busy || !initialized}
+                style={{
+                  width: "100%",
+                  border: "1px solid var(--border)",
+                  background: "rgba(0, 0, 0, 0.35)",
+                  color: "var(--text)",
+                  borderRadius: "12px",
+                  padding: "0.75rem 0.85rem",
+                  fontFamily: "var(--sans)",
+                  fontSize: "0.9rem",
+                }}
+              >
+                <option value="flexible">Flexible — withdraw anytime</option>
+                <option value="7d">7-day lock</option>
+                <option value="30d">30-day lock</option>
+              </select>
+              {isLocked && (
+                <span style={{ display: "block", marginTop: "0.35rem", fontSize: "0.82rem", color: "var(--muted)" }}>
+                  Stake is locked — a flexible deposit will not unlock existing funds.
+                </span>
+              )}
+              {!isLocked && lockTier !== "flexible" && (
+                <span style={{ display: "block", marginTop: "0.35rem", fontSize: "0.82rem", color: "var(--muted)" }}>
+                  Lock applies to your entire stake until unlock time.
+                </span>
+              )}
+            </label>
           </div>
           <div className="action-row">
             <label>
@@ -465,12 +556,18 @@ export function PoolDashboard() {
             </label>
             <button
               className="btn-secondary"
-              disabled={busy || !anchorWallet || !initialized}
+              disabled={busy || !anchorWallet || !initialized || isLocked}
               onClick={withdraw}
             >
               Withdraw
             </button>
           </div>
+          {isLocked && (
+            <p style={{ margin: 0, fontSize: "0.82rem", color: "var(--muted)" }}>
+              Withdraw blocked until unlock — claim still available. Unlocks in{" "}
+              {formatLockRemaining(lockRemainingSec)}.
+            </p>
+          )}
         </section>
 
         {status && <p className="status-toast">{status}</p>}
