@@ -23,7 +23,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const idl = JSON.parse(
-  fs.readFileSync(path.join(__dirname, "../target/idl/mentik_sol_pool.json"), "utf8")
+  fs.readFileSync(path.join(__dirname, "../app/src/idl/mentik_sol_pool.json"), "utf8")
 );
 
 const PROGRAM_ID = new PublicKey(idl.address);
