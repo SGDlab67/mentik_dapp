@@ -1,11 +1,14 @@
 use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::pubkey::Pubkey;
 use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
-use mentik_sol_pool::state::GlobalState;
+use mentik_sol_pool::state::{GlobalState, StakeAccount};
 use litesvm::LiteSVM;
 use mentik_sol_pool::{
     accounts, instruction,
-    constants::{DAILY_EMISSION, GLOBAL_SEED, MENTIK_MINT_SEED, MINT_AUTHORITY_SEED, SOL_VAULT_SEED, STAKE_SEED},
+    constants::{
+        DAILY_EMISSION, GLOBAL_SEED, LOCK_7_DAYS, MENTIK_MINT_SEED, MINT_AUTHORITY_SEED,
+        SOL_VAULT_SEED, STAKE_SEED,
+    },
     ID,
 };
 use solana_address::Address;
@@ -109,7 +112,7 @@ fn init_pool(svm: &mut LiteSVM, authority: &Keypair) {
     send(svm, authority, &[authority], ix).expect("initialize");
 }
 
-fn deposit(svm: &mut LiteSVM, user: &Keypair, lamports: u64) {
+fn deposit(svm: &mut LiteSVM, user: &Keypair, lamports: u64, lock_seconds: u64) {
     let (global_state, _) = pda(&[GLOBAL_SEED]);
     let (sol_vault, _) = pda(&[SOL_VAULT_SEED]);
     let (stake_account, _) = pda(&[STAKE_SEED, signer_pk(user).as_ref()]);
@@ -124,10 +127,35 @@ fn deposit(svm: &mut LiteSVM, user: &Keypair, lamports: u64) {
             system_program: SYSTEM_PROGRAM,
         }
         .to_account_metas(None),
-        data: instruction::DepositSol { amount: lamports }.data(),
+        data: instruction::DepositSol {
+            amount: lamports,
+            lock_seconds,
+        }
+        .data(),
     };
 
     send(svm, user, &[user], ix).expect("deposit");
+}
+
+fn withdraw(svm: &mut LiteSVM, user: &Keypair, lamports: u64) -> Result<(), String> {
+    let (global_state, _) = pda(&[GLOBAL_SEED]);
+    let (sol_vault, _) = pda(&[SOL_VAULT_SEED]);
+    let (stake_account, _) = pda(&[STAKE_SEED, signer_pk(user).as_ref()]);
+
+    let ix = Instruction {
+        program_id: program_pubkey(),
+        accounts: accounts::WithdrawSol {
+            user: pk_addr(signer_pk(user)),
+            global_state,
+            sol_vault,
+            stake_account,
+            system_program: SYSTEM_PROGRAM,
+        }
+        .to_account_metas(None),
+        data: instruction::WithdrawSol { amount: lamports }.data(),
+    };
+
+    send(svm, user, &[user], ix)
 }
 
 fn sync_pool(svm: &mut LiteSVM, payer: &Keypair) {
@@ -202,6 +230,13 @@ fn read_global(svm: &LiteSVM) -> GlobalState {
     GlobalState::try_deserialize(&mut data).expect("deserialize global")
 }
 
+fn read_stake(svm: &LiteSVM, user: &Keypair) -> StakeAccount {
+    let (stake, _) = pda(&[STAKE_SEED, signer_pk(user).as_ref()]);
+    let acc = svm.get_account(&stake).expect("stake");
+    let mut data: &[u8] = &acc.data;
+    StakeAccount::try_deserialize(&mut data).expect("deserialize stake")
+}
+
 fn token_balance(svm: &LiteSVM, ata: Address) -> u64 {
     let acc = svm.get_account(&ata).expect("ata");
     let state = spl_token::state::Account::unpack(&acc.data).expect("unpack");
@@ -220,7 +255,7 @@ fn single_staker_earns_1000_mentik_per_day() {
     svm.airdrop(&user.pubkey(), 10_000_000_000).unwrap();
 
     init_pool(&mut svm, &authority);
-    deposit(&mut svm, &user, 1_000_000_000);
+    deposit(&mut svm, &user, 1_000_000_000, 0);
 
     let before = svm.get_sysvar::<Clock>().unix_timestamp;
     warp_seconds(&mut svm, 86_400);
@@ -266,8 +301,8 @@ fn two_stakers_split_rewards_evenly() {
     svm.airdrop(&user_b.pubkey(), 10_000_000_000).unwrap();
 
     init_pool(&mut svm, &authority);
-    deposit(&mut svm, &user_a, 1_000_000_000);
-    deposit(&mut svm, &user_b, 1_000_000_000);
+    deposit(&mut svm, &user_a, 1_000_000_000, 0);
+    deposit(&mut svm, &user_b, 1_000_000_000, 0);
 
     warp_seconds(&mut svm, 86_400);
     sync_pool(&mut svm, &authority);
@@ -286,4 +321,35 @@ fn two_stakers_split_rewards_evenly() {
     assert!(bal_a >= half.saturating_sub(10_000), "user_a: {bal_a}");
     assert!(bal_b >= half.saturating_sub(10_000), "user_b: {bal_b}");
     assert!(bal_a + bal_b <= (DAILY_EMISSION as u64) + 20_000);
+}
+
+#[test]
+fn stake_lock_blocks_withdraw_until_unlock() {
+    let mut svm = LiteSVM::new();
+    svm.add_program(program_address(), &read_program_bytes())
+        .unwrap();
+
+    let authority = Keypair::new();
+    let user = Keypair::new();
+    svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    svm.airdrop(&user.pubkey(), 10_000_000_000).unwrap();
+
+    init_pool(&mut svm, &authority);
+    let now = svm.get_sysvar::<Clock>().unix_timestamp;
+    deposit(&mut svm, &user, 500_000_000, LOCK_7_DAYS);
+
+    let stake = read_stake(&svm, &user);
+    assert!(stake.locked_until > now, "expected active lock");
+
+    let withdraw_err = withdraw(&mut svm, &user, 100_000_000).unwrap_err();
+    assert!(
+        withdraw_err.contains("6004") || withdraw_err.to_lowercase().contains("stakelocked"),
+        "expected StakeLocked, got: {withdraw_err}"
+    );
+
+    warp_seconds(&mut svm, LOCK_7_DAYS as i64 + 1);
+    withdraw(&mut svm, &user, 100_000_000).expect("withdraw after unlock");
+
+    deposit(&mut svm, &user, 100_000_000, 0);
+    withdraw(&mut svm, &user, 50_000_000).expect("flexible deposit withdraw");
 }

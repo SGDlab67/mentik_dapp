@@ -16,3 +16,11 @@ pub const SOL_VAULT_SEED: &[u8] = b"sol_vault";
 pub const MINT_AUTHORITY_SEED: &[u8] = b"mint_authority";
 pub const MENTIK_MINT_SEED: &[u8] = b"mentik_mint";
 pub const STAKE_SEED: &[u8] = b"stake";
+
+pub const LOCK_NONE: u64 = 0;
+pub const LOCK_7_DAYS: u64 = 604_800;
+pub const LOCK_30_DAYS: u64 = 2_592_000;
+
+pub fn is_valid_lock_duration(seconds: u64) -> bool {
+    matches!(seconds, LOCK_NONE | LOCK_7_DAYS | LOCK_30_DAYS)
+}

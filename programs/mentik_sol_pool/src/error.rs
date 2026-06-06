@@ -10,4 +10,8 @@ pub enum PoolError {
     ZeroDeposit,
     #[msg("Math overflow")]
     MathOverflow,
+    #[msg("Stake is locked until unlock time")]
+    StakeLocked,
+    #[msg("Invalid lock duration")]
+    InvalidLockDuration,
 }

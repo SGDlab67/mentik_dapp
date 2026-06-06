@@ -20,8 +20,8 @@ pub mod mentik_sol_pool {
         initialize::handler(ctx)
     }
 
-    pub fn deposit_sol(ctx: Context<DepositSol>, amount: u64) -> Result<()> {
-        deposit_sol::handler(ctx, amount)
+    pub fn deposit_sol(ctx: Context<DepositSol>, amount: u64, lock_seconds: u64) -> Result<()> {
+        deposit_sol::handler(ctx, amount, lock_seconds)
     }
 
     pub fn withdraw_sol(ctx: Context<WithdrawSol>, amount: u64) -> Result<()> {
