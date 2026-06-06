@@ -465,8 +465,8 @@ export function PoolDashboard() {
                   {isLocked
                     ? `Unlocks in ${formatLockRemaining(lockRemainingSec)}`
                     : lockedUntilSec > 0
-                      ? "Flexible (unlocked)"
-                      : "Flexible"}
+                      ? "Unlocked (lock expired)"
+                      : "No lock"}
                 </dd>
               </div>
             </dl>
@@ -487,26 +487,6 @@ export function PoolDashboard() {
               <span className="card-icon">⇄</span>
               Manage stake
             </h3>
-          </div>
-          <div className="action-row">
-            <label>
-              Deposit amount
-              <div className="input-wrap">
-                <input
-                  value={depositSol}
-                  onChange={(e) => setDepositSol(e.target.value)}
-                  inputMode="decimal"
-                />
-                <span className="suffix">SOL</span>
-              </div>
-            </label>
-            <button
-              className="btn-primary"
-              disabled={busy || !anchorWallet || !initialized}
-              onClick={deposit}
-            >
-              Deposit
-            </button>
           </div>
           <div className="action-row" style={{ gridTemplateColumns: "1fr" }}>
             <label>
@@ -530,7 +510,37 @@ export function PoolDashboard() {
                 <option value="7d">7-day lock</option>
                 <option value="30d">30-day lock</option>
               </select>
+              {isLocked && (
+                <span style={{ display: "block", marginTop: "0.35rem", fontSize: "0.82rem", color: "var(--muted)" }}>
+                  Stake is locked — a flexible deposit will not unlock existing funds.
+                </span>
+              )}
+              {!isLocked && lockTier !== "flexible" && (
+                <span style={{ display: "block", marginTop: "0.35rem", fontSize: "0.82rem", color: "var(--muted)" }}>
+                  Lock applies to your entire stake until unlock time.
+                </span>
+              )}
             </label>
+          </div>
+          <div className="action-row">
+            <label>
+              Deposit amount
+              <div className="input-wrap">
+                <input
+                  value={depositSol}
+                  onChange={(e) => setDepositSol(e.target.value)}
+                  inputMode="decimal"
+                />
+                <span className="suffix">SOL</span>
+              </div>
+            </label>
+            <button
+              className="btn-primary"
+              disabled={busy || !anchorWallet || !initialized}
+              onClick={deposit}
+            >
+              Deposit
+            </button>
           </div>
           <div className="action-row">
             <label>
