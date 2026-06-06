@@ -2,10 +2,13 @@
   "license": "ISC",
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
-    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
+    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
+    "build": "npm run build --prefix app",
+    "vercel-build": "npm run build --prefix app"
   },
   "dependencies": {
-    "@anchor-lang/core": "^1.0.0"
+    "@anchor-lang/core": "^1.0.0",
+    "next": "^15.3.3"
   },
   "devDependencies": {
     "chai": "^4.3.4",
