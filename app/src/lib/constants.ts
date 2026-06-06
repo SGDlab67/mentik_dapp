@@ -13,3 +13,6 @@ export const GLOBAL_SEED = "global";
 export const SOL_VAULT_SEED = "sol_vault";
 export const MENTIK_MINT_SEED = "mentik_mint";
 export const STAKE_SEED = "stake";
+export const LOCK_NONE = 0;
+export const LOCK_7_DAYS = 604_800;
+export const LOCK_30_DAYS = 2_592_000;
