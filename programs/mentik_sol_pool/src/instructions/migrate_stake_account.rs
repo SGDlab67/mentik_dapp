@@ -56,7 +56,7 @@ pub struct MigrateStakeAccount<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(mut ctx: Context<MigrateStakeAccount>) -> Result<()> {
+pub fn handler(ctx: Context<MigrateStakeAccount>) -> Result<()> {
     let legacy = ctx.accounts.stake_account.try_as_from()?;
 
     require_keys_eq!(
