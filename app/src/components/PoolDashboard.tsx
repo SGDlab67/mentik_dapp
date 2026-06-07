@@ -84,6 +84,7 @@ export function PoolDashboard() {
   const anchorWallet = useAnchorWallet();
   const [global, setGlobal] = useState<GlobalState | null>(null);
   const [stake, setStake] = useState<StakeState | null>(null);
+  const [stakeNeedsMigration, setStakeNeedsMigration] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [programLive, setProgramLive] = useState<boolean | null>(null);
   const [depositSol, setDepositSol] = useState("0.1");
@@ -104,6 +105,7 @@ export function PoolDashboard() {
       setInitialized(false);
       setGlobal(null);
       setStake(null);
+      setStakeNeedsMigration(false);
       return;
     }
     setInitialized(true);
@@ -121,12 +123,14 @@ export function PoolDashboard() {
 
     if (!wallet.publicKey) {
       setStake(null);
+      setStakeNeedsMigration(false);
       return;
     }
 
+    const stakePk = stakeAccountPda(wallet.publicKey);
     try {
       const s = (await (readProgram.account as any).stakeAccount.fetch(
-        stakeAccountPda(wallet.publicKey)
+        stakePk
       )) as {
         solAmount: BN;
         rewardDebt: BN;
@@ -139,8 +143,11 @@ export function PoolDashboard() {
         pendingRewards: s.pendingRewards,
         lockedUntil: s.lockedUntil ?? new BN(0),
       });
+      setStakeNeedsMigration(false);
     } catch {
       setStake(null);
+      const stakeInfo = await connection.getAccountInfo(stakePk);
+      setStakeNeedsMigration(stakeInfo?.owner.equals(PROGRAM_ID) === true);
     }
   }, [connection, wallet.publicKey]);
 
@@ -161,12 +168,14 @@ export function PoolDashboard() {
   }, [isLocked, lockedUntilSec]);
 
   const pendingMentik = useMemo(() => {
-    if (!global || !stake || stake.solAmount.isZero()) return 0n;
+    if (!global || !stake) return 0n;
+    const settledRewards = BigInt(stake.pendingRewards.toString());
+    if (stake.solAmount.isZero()) return settledRewards;
     const accumulated =
       (BigInt(stake.solAmount.toString()) * BigInt(global.rewardPerLamport.toString())) /
         ACC_PRECISION -
       BigInt(stake.rewardDebt.toString());
-    return accumulated + BigInt(stake.pendingRewards.toString());
+    return accumulated + settledRewards;
   }, [global, stake]);
 
   const userSharePct = useMemo(() => {
@@ -300,6 +309,19 @@ export function PoolDashboard() {
         .rpc();
     });
 
+  const migrateStakeAccount = () =>
+    runRpc("Migrate stake account", async () => {
+      const program = programForTx();
+      return program.methods
+        .migrateStakeAccount()
+        .accountsPartial({
+          user: wallet.publicKey!,
+          stakeAccount: stakeAccountPda(wallet.publicKey!),
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    });
+
   const sync = () =>
     runRpc("Sync pool", async () => {
       const program = programForTx();
@@ -342,6 +364,12 @@ export function PoolDashboard() {
         {programLive === false && (
           <p className="status-toast" style={{ marginBottom: "1rem" }}>
             Program not found on devnet. Deploy with: anchor deploy --provider.cluster devnet
+          </p>
+        )}
+        {stakeNeedsMigration && (
+          <p className="status-toast" style={{ marginBottom: "1rem" }}>
+            Your stake account uses the pre-lock layout. Migrate it once to restore deposits,
+            withdrawals, and claims.
           </p>
         )}
 
@@ -470,14 +498,25 @@ export function PoolDashboard() {
                 </dd>
               </div>
             </dl>
-            <button
-              className="btn-primary"
-              style={{ width: "100%" }}
-              disabled={busy || !anchorWallet || !initialized}
-              onClick={claim}
-            >
-              Claim MENTIK
-            </button>
+            {stakeNeedsMigration ? (
+              <button
+                className="btn-primary"
+                style={{ width: "100%" }}
+                disabled={busy || !anchorWallet || !initialized}
+                onClick={migrateStakeAccount}
+              >
+                Migrate stake account
+              </button>
+            ) : (
+              <button
+                className="btn-primary"
+                style={{ width: "100%" }}
+                disabled={busy || !anchorWallet || !initialized}
+                onClick={claim}
+              >
+                Claim MENTIK
+              </button>
+            )}
           </article>
         </section>
 
@@ -536,7 +575,7 @@ export function PoolDashboard() {
             </label>
             <button
               className="btn-primary"
-              disabled={busy || !anchorWallet || !initialized}
+              disabled={busy || !anchorWallet || !initialized || stakeNeedsMigration}
               onClick={deposit}
             >
               Deposit
@@ -556,7 +595,7 @@ export function PoolDashboard() {
             </label>
             <button
               className="btn-secondary"
-              disabled={busy || !anchorWallet || !initialized || isLocked}
+              disabled={busy || !anchorWallet || !initialized || isLocked || stakeNeedsMigration}
               onClick={withdraw}
             >
               Withdraw

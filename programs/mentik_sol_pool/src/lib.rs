@@ -32,6 +32,10 @@ pub mod mentik_sol_pool {
         claim_mentik::handler(ctx)
     }
 
+    pub fn migrate_stake_account(ctx: Context<MigrateStakeAccount>) -> Result<()> {
+        migrate_stake_account::handler(ctx)
+    }
+
     pub fn sync_pool(ctx: Context<SyncPool>) -> Result<()> {
         sync_pool::handler(ctx)
     }
