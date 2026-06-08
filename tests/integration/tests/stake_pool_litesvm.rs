@@ -1,15 +1,15 @@
 use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::pubkey::Pubkey;
 use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
-use mentik_sol_pool::state::{GlobalState, StakeAccount};
 use litesvm::LiteSVM;
+use mentik_sol_pool::state::{GlobalState, StakeAccount};
 use mentik_sol_pool::{
-    accounts, instruction,
+    accounts,
     constants::{
-        DAILY_EMISSION, GLOBAL_SEED, LOCK_30_DAYS, LOCK_7_DAYS, MENTIK_MINT_SEED, MINT_AUTHORITY_SEED,
-        SOL_VAULT_SEED, STAKE_SEED,
+        DAILY_EMISSION, GLOBAL_SEED, LOCK_30_DAYS, LOCK_7_DAYS, MENTIK_MINT_SEED,
+        MINT_AUTHORITY_SEED, SOL_VAULT_SEED, STAKE_SEED,
     },
-    ID,
+    instruction, ID,
 };
 use solana_address::Address;
 use solana_clock::Clock;
@@ -203,8 +203,8 @@ fn create_ata(svm: &mut LiteSVM, payer: &Keypair, owner: &Pubkey, mint: &Pubkey)
     svm.expire_blockhash();
     let blockhash = svm.latest_blockhash();
     let msg = Message::new_with_blockhash(&[ix], Some(&payer.pubkey()), &blockhash);
-    let tx = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[payer])
-        .expect("ata tx");
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[payer]).expect("ata tx");
     svm.send_transaction(tx).expect("create ata");
     ata_addr
 }
@@ -244,6 +244,12 @@ fn read_stake(svm: &LiteSVM, user: &Keypair) -> StakeAccount {
     let acc = svm.get_account(&stake).expect("stake");
     let mut data: &[u8] = &acc.data;
     StakeAccount::try_deserialize(&mut data).expect("deserialize stake")
+}
+
+fn read_locked_until(svm: &LiteSVM, user: &Keypair) -> i64 {
+    let (stake, _) = pda(&[STAKE_SEED, signer_pk(user).as_ref()]);
+    let acc = svm.get_account(&stake).expect("stake");
+    StakeAccount::locked_until_from_data(&acc.data).expect("deserialize lock")
 }
 
 fn token_balance(svm: &LiteSVM, ata: Address) -> u64 {
@@ -347,8 +353,8 @@ fn stake_lock_blocks_withdraw_until_unlock() {
     let now = svm.get_sysvar::<Clock>().unix_timestamp;
     deposit(&mut svm, &user, 500_000_000, LOCK_7_DAYS);
 
-    let stake = read_stake(&svm, &user);
-    assert!(stake.locked_until > now, "expected active lock");
+    let locked_until = read_locked_until(&svm, &user);
+    assert!(locked_until > now, "expected active lock");
 
     let withdraw_err = withdraw(&mut svm, &user, 100_000_000).unwrap_err();
     assert!(
@@ -396,9 +402,8 @@ fn claim_while_locked_succeeds() {
     init_pool(&mut svm, &authority);
     deposit(&mut svm, &user, 1_000_000_000, LOCK_7_DAYS);
 
-    let stake = read_stake(&svm, &user);
     assert!(
-        stake.locked_until > svm.get_sysvar::<Clock>().unix_timestamp,
+        read_locked_until(&svm, &user) > svm.get_sysvar::<Clock>().unix_timestamp,
         "expected active lock"
     );
 
@@ -430,11 +435,44 @@ fn lock_extension_uses_max() {
     init_pool(&mut svm, &authority);
     let now = svm.get_sysvar::<Clock>().unix_timestamp;
     deposit(&mut svm, &user, 500_000_000, LOCK_7_DAYS);
-    let after_seven = read_stake(&svm, &user).locked_until;
+    let after_seven = read_locked_until(&svm, &user);
     assert_eq!(after_seven, now + LOCK_7_DAYS as i64);
 
     deposit(&mut svm, &user, 100_000_000, LOCK_30_DAYS);
-    let after_thirty = read_stake(&svm, &user).locked_until;
+    let after_thirty = read_locked_until(&svm, &user);
     assert_eq!(after_thirty, now + LOCK_30_DAYS as i64);
     assert!(after_thirty > after_seven);
+}
+
+#[test]
+fn legacy_stake_layout_can_withdraw_and_relock_after_upgrade() {
+    let mut svm = LiteSVM::new();
+    svm.add_program(program_address(), &read_program_bytes())
+        .unwrap();
+
+    let authority = Keypair::new();
+    let user = Keypair::new();
+    svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    svm.airdrop(&user.pubkey(), 10_000_000_000).unwrap();
+
+    init_pool(&mut svm, &authority);
+    deposit(&mut svm, &user, 1_000_000_000, 0);
+
+    let (stake_addr, _) = pda(&[STAKE_SEED, signer_pk(&user).as_ref()]);
+    let mut legacy_account = svm.get_account(&stake_addr).expect("stake");
+    assert_eq!(legacy_account.data.len(), StakeAccount::SPACE_WITH_LOCK);
+    legacy_account
+        .data
+        .truncate(StakeAccount::LOCKED_UNTIL_OFFSET);
+    svm.set_account(stake_addr, legacy_account).unwrap();
+
+    withdraw(&mut svm, &user, 100_000_000).expect("legacy layout withdraw");
+    assert_eq!(read_stake(&svm, &user).sol_amount, 900_000_000);
+    assert_eq!(read_locked_until(&svm, &user), 0);
+
+    let now = svm.get_sysvar::<Clock>().unix_timestamp;
+    deposit(&mut svm, &user, 100_000_000, LOCK_7_DAYS);
+    let expanded_account = svm.get_account(&stake_addr).expect("expanded stake");
+    assert_eq!(expanded_account.data.len(), StakeAccount::SPACE_WITH_LOCK);
+    assert_eq!(read_locked_until(&svm, &user), now + LOCK_7_DAYS as i64);
 }

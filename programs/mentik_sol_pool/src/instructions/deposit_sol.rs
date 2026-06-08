@@ -29,13 +29,42 @@ pub struct DepositSol<'info> {
     #[account(
         init_if_needed,
         payer = user,
-        space = 8 + StakeAccount::INIT_SPACE,
+        space = StakeAccount::SPACE_WITH_LOCK,
         seeds = [STAKE_SEED, user.key().as_ref()],
         bump
     )]
     pub stake_account: Account<'info, StakeAccount>,
 
     pub system_program: Program<'info, System>,
+}
+
+fn ensure_locked_until_space<'info>(
+    stake_account: &AccountInfo<'info>,
+    payer: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+) -> Result<()> {
+    if stake_account.data_len() >= StakeAccount::SPACE_WITH_LOCK {
+        return Ok(());
+    }
+
+    let rent = Rent::get()?;
+    let minimum_balance = rent.minimum_balance(StakeAccount::SPACE_WITH_LOCK);
+    let top_up = minimum_balance.saturating_sub(stake_account.lamports());
+    if top_up > 0 {
+        transfer(
+            CpiContext::new(
+                system_program.clone(),
+                Transfer {
+                    from: payer.clone(),
+                    to: stake_account.clone(),
+                },
+            ),
+            top_up,
+        )?;
+    }
+
+    stake_account.realloc(StakeAccount::SPACE_WITH_LOCK, false)?;
+    Ok(())
 }
 
 pub fn handler(ctx: Context<DepositSol>, amount: u64, lock_seconds: u64) -> Result<()> {
@@ -48,6 +77,11 @@ pub fn handler(ctx: Context<DepositSol>, amount: u64, lock_seconds: u64) -> Resu
     let now = Clock::get()?.unix_timestamp;
     let global = &mut ctx.accounts.global_state;
     update_pool(global, now)?;
+    let stake_info = ctx.accounts.stake_account.to_account_info();
+    let current_locked_until = {
+        let data = stake_info.try_borrow_data()?;
+        StakeAccount::locked_until_from_data(&data)?
+    };
 
     let stake = &mut ctx.accounts.stake_account;
     if stake.owner == Pubkey::default() {
@@ -56,7 +90,6 @@ pub fn handler(ctx: Context<DepositSol>, amount: u64, lock_seconds: u64) -> Resu
         stake.sol_amount = 0;
         stake.reward_debt = 0;
         stake.pending_rewards = 0;
-        stake.locked_until = 0;
     } else {
         require_keys_eq!(stake.owner, ctx.accounts.user.key());
         settle_stake(stake, global)?;
@@ -89,12 +122,23 @@ pub fn handler(ctx: Context<DepositSol>, amount: u64, lock_seconds: u64) -> Resu
         .ok_or(PoolError::MathOverflow)?;
 
     if lock_seconds > 0 {
+        ensure_locked_until_space(
+            &stake_info,
+            &ctx.accounts.user.to_account_info(),
+            &ctx.accounts.system_program.to_account_info(),
+        )?;
         let new_lock = now
             .checked_add(lock_seconds as i64)
             .ok_or(PoolError::MathOverflow)?;
-        stake.locked_until = stake.locked_until.max(new_lock);
+        let locked_until = current_locked_until.max(new_lock);
+        let mut data = stake_info.try_borrow_mut_data()?;
+        StakeAccount::set_locked_until_in_data(&mut data, locked_until)?;
     }
 
-    msg!("Deposited {} lamports; pool TVL {}", amount, global.total_staked);
+    msg!(
+        "Deposited {} lamports; pool TVL {}",
+        amount,
+        global.total_staked
+    );
     Ok(())
 }

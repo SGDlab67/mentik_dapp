@@ -43,12 +43,17 @@ pub fn handler(ctx: Context<WithdrawSol>, amount: u64) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let global = &mut ctx.accounts.global_state;
     update_pool(global, now)?;
+    let locked_until = {
+        let stake_info = ctx.accounts.stake_account.to_account_info();
+        let data = stake_info.try_borrow_data()?;
+        StakeAccount::locked_until_from_data(&data)?
+    };
 
     let stake = &mut ctx.accounts.stake_account;
     settle_stake(stake, global)?;
 
     require!(
-        stake.locked_until == 0 || now >= stake.locked_until,
+        locked_until == 0 || now >= locked_until,
         PoolError::StakeLocked
     );
 
