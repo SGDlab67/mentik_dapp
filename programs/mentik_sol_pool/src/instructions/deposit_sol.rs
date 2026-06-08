@@ -41,7 +41,7 @@ pub struct DepositSol<'info> {
 fn ensure_locked_until_space<'info>(
     stake_account: &AccountInfo<'info>,
     payer: &AccountInfo<'info>,
-    system_program: &AccountInfo<'info>,
+    system_program: &Program<'info, System>,
 ) -> Result<()> {
     if stake_account.data_len() >= StakeAccount::SPACE_WITH_LOCK {
         return Ok(());
@@ -53,7 +53,7 @@ fn ensure_locked_until_space<'info>(
     if top_up > 0 {
         transfer(
             CpiContext::new(
-                system_program.clone(),
+                system_program.key(),
                 Transfer {
                     from: payer.clone(),
                     to: stake_account.clone(),
@@ -63,7 +63,7 @@ fn ensure_locked_until_space<'info>(
         )?;
     }
 
-    stake_account.realloc(StakeAccount::SPACE_WITH_LOCK, false)?;
+    stake_account.resize(StakeAccount::SPACE_WITH_LOCK)?;
     Ok(())
 }
 
@@ -125,7 +125,7 @@ pub fn handler(ctx: Context<DepositSol>, amount: u64, lock_seconds: u64) -> Resu
         ensure_locked_until_space(
             &stake_info,
             &ctx.accounts.user.to_account_info(),
-            &ctx.accounts.system_program.to_account_info(),
+            &ctx.accounts.system_program,
         )?;
         let new_lock = now
             .checked_add(lock_seconds as i64)
