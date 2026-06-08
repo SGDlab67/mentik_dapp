@@ -46,6 +46,45 @@ type StakeState = {
 
 type LockTier = "flexible" | "7d" | "30d";
 
+const STAKE_ACCOUNT_DISCRIMINATOR = [80, 158, 67, 124, 50, 189, 192, 255];
+const STAKE_ACCOUNT_CORE_LEN = 73;
+const STAKE_ACCOUNT_LOCK_LEN = 81;
+const STAKE_SOL_AMOUNT_OFFSET = 41;
+const STAKE_REWARD_DEBT_OFFSET = 49;
+const STAKE_PENDING_REWARDS_OFFSET = 65;
+const STAKE_LOCKED_UNTIL_OFFSET = 73;
+
+function readUnsignedLe(data: Uint8Array, offset: number, byteLength: number): BN {
+  let value = 0n;
+  for (let i = 0; i < byteLength; i += 1) {
+    value += BigInt(data[offset + i]) << BigInt(8 * i);
+  }
+  return new BN(value.toString());
+}
+
+function readSignedI64Le(data: Uint8Array, offset: number): BN {
+  const unsigned = BigInt(readUnsignedLe(data, offset, 8).toString());
+  return new BN(BigInt.asIntN(64, unsigned).toString());
+}
+
+function decodeStakeState(data: Uint8Array): StakeState | null {
+  if (data.length < STAKE_ACCOUNT_CORE_LEN) return null;
+  const hasStakeDiscriminator = STAKE_ACCOUNT_DISCRIMINATOR.every(
+    (byte, index) => data[index] === byte
+  );
+  if (!hasStakeDiscriminator) return null;
+
+  return {
+    solAmount: readUnsignedLe(data, STAKE_SOL_AMOUNT_OFFSET, 8),
+    rewardDebt: readUnsignedLe(data, STAKE_REWARD_DEBT_OFFSET, 16),
+    pendingRewards: readUnsignedLe(data, STAKE_PENDING_REWARDS_OFFSET, 8),
+    lockedUntil:
+      data.length >= STAKE_ACCOUNT_LOCK_LEN
+        ? readSignedI64Le(data, STAKE_LOCKED_UNTIL_OFFSET)
+        : new BN(0),
+  };
+}
+
 function lockSecondsForTier(tier: LockTier): number {
   switch (tier) {
     case "7d":
@@ -125,20 +164,8 @@ export function PoolDashboard() {
     }
 
     try {
-      const s = (await (readProgram.account as any).stakeAccount.fetch(
-        stakeAccountPda(wallet.publicKey)
-      )) as {
-        solAmount: BN;
-        rewardDebt: BN;
-        pendingRewards: BN;
-        lockedUntil: BN;
-      };
-      setStake({
-        solAmount: s.solAmount,
-        rewardDebt: s.rewardDebt,
-        pendingRewards: s.pendingRewards,
-        lockedUntil: s.lockedUntil ?? new BN(0),
-      });
+      const stakeInfo = await connection.getAccountInfo(stakeAccountPda(wallet.publicKey));
+      setStake(stakeInfo ? decodeStakeState(stakeInfo.data) : null);
     } catch {
       setStake(null);
     }

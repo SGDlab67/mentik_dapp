@@ -14,4 +14,6 @@ pub enum PoolError {
     StakeLocked,
     #[msg("Invalid lock duration")]
     InvalidLockDuration,
+    #[msg("Stake account is too small for lock data")]
+    StakeAccountTooSmall,
 }
