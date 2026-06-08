@@ -29,7 +29,11 @@ pub struct DepositSol<'info> {
     #[account(
         init_if_needed,
         payer = user,
-        space = StakeAccount::SPACE_WITH_LOCK,
+        space = if stake_account.to_account_info().data_is_empty() {
+            StakeAccount::SPACE_WITH_LOCK
+        } else {
+            stake_account.to_account_info().data_len()
+        },
         seeds = [STAKE_SEED, user.key().as_ref()],
         bump
     )]
