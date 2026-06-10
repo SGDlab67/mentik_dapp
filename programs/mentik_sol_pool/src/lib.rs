@@ -24,6 +24,10 @@ pub mod mentik_sol_pool {
         deposit_sol::handler(ctx, amount, lock_seconds)
     }
 
+    pub fn migrate_stake(ctx: Context<MigrateStake>) -> Result<()> {
+        migrate_stake::handler(ctx)
+    }
+
     pub fn withdraw_sol(ctx: Context<WithdrawSol>, amount: u64) -> Result<()> {
         withdraw_sol::handler(ctx, amount)
     }

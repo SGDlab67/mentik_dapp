@@ -46,6 +46,26 @@ type StakeState = {
 
 type LockTier = "flexible" | "7d" | "30d";
 
+const LEGACY_STAKE_ACCOUNT_SIZE = 8 + 1 + 32 + 8 + 16 + 8;
+
+function readLeBn(data: Uint8Array, offset: number, length: number): BN {
+  return new BN(Array.from(data.slice(offset, offset + length)), 10, "le");
+}
+
+function parseLegacyStake(data: Uint8Array): (StakeState & { owner: PublicKey }) | null {
+  if (data.length !== LEGACY_STAKE_ACCOUNT_SIZE) return null;
+  let offset = 8;
+  offset += 1; // bump
+  const owner = new PublicKey(data.slice(offset, offset + 32));
+  offset += 32;
+  const solAmount = readLeBn(data, offset, 8);
+  offset += 8;
+  const rewardDebt = readLeBn(data, offset, 16);
+  offset += 16;
+  const pendingRewards = readLeBn(data, offset, 8);
+  return { owner, solAmount, rewardDebt, pendingRewards, lockedUntil: new BN(0) };
+}
+
 function lockSecondsForTier(tier: LockTier): number {
   switch (tier) {
     case "7d":
@@ -92,6 +112,7 @@ export function PoolDashboard() {
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [needsStakeMigration, setNeedsStakeMigration] = useState(false);
 
   useEffect(() => {
     isProgramDeployed(connection).then(setProgramLive);
@@ -104,6 +125,7 @@ export function PoolDashboard() {
       setInitialized(false);
       setGlobal(null);
       setStake(null);
+      setNeedsStakeMigration(false);
       return;
     }
     setInitialized(true);
@@ -121,13 +143,13 @@ export function PoolDashboard() {
 
     if (!wallet.publicKey) {
       setStake(null);
+      setNeedsStakeMigration(false);
       return;
     }
 
+    const stakePk = stakeAccountPda(wallet.publicKey);
     try {
-      const s = (await (readProgram.account as any).stakeAccount.fetch(
-        stakeAccountPda(wallet.publicKey)
-      )) as {
+      const s = (await (readProgram.account as any).stakeAccount.fetch(stakePk)) as {
         solAmount: BN;
         rewardDebt: BN;
         pendingRewards: BN;
@@ -139,8 +161,25 @@ export function PoolDashboard() {
         pendingRewards: s.pendingRewards,
         lockedUntil: s.lockedUntil ?? new BN(0),
       });
+      setNeedsStakeMigration(false);
     } catch {
+      const legacyInfo = await connection.getAccountInfo(stakePk);
+      const legacyStake =
+        legacyInfo?.owner.equals(PROGRAM_ID) && legacyInfo.data.length === LEGACY_STAKE_ACCOUNT_SIZE
+          ? parseLegacyStake(legacyInfo.data)
+          : null;
+      if (legacyStake && legacyStake.owner.equals(wallet.publicKey)) {
+        setStake({
+          solAmount: legacyStake.solAmount,
+          rewardDebt: legacyStake.rewardDebt,
+          pendingRewards: legacyStake.pendingRewards,
+          lockedUntil: legacyStake.lockedUntil,
+        });
+        setNeedsStakeMigration(true);
+        return;
+      }
       setStake(null);
+      setNeedsStakeMigration(false);
     }
   }, [connection, wallet.publicKey]);
 
@@ -233,6 +272,9 @@ export function PoolDashboard() {
 
   const deposit = () =>
     runRpc("Deposit SOL", async () => {
+      if (needsStakeMigration) {
+        throw new Error("Migrate your legacy stake account before depositing.");
+      }
       const lamports = Math.floor(parseFloat(depositSol) * LPS);
       if (!Number.isFinite(lamports) || lamports <= 0) throw new Error("Invalid deposit amount");
       const program = programForTx();
@@ -249,8 +291,24 @@ export function PoolDashboard() {
         .rpc();
     });
 
+  const migrateLegacyStake = () =>
+    runRpc("Migrate legacy stake", async () => {
+      const program = programForTx();
+      return program.methods
+        .migrateStake()
+        .accountsPartial({
+          user: wallet.publicKey!,
+          stakeAccount: stakeAccountPda(wallet.publicKey!),
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    });
+
   const withdraw = () =>
     runRpc("Withdraw SOL", async () => {
+      if (needsStakeMigration) {
+        throw new Error("Migrate your legacy stake account before withdrawing.");
+      }
       if (isLocked) {
         throw new Error(
           `Stake is locked — unlocks in ${formatLockRemaining(lockRemainingSec)}`
@@ -273,6 +331,9 @@ export function PoolDashboard() {
 
   const claim = () =>
     runRpc("Claim MENTIK", async () => {
+      if (needsStakeMigration) {
+        throw new Error("Migrate your legacy stake account before claiming.");
+      }
       const mint = mentikMintPda();
       const ata = getAssociatedTokenAddressSync(mint, wallet.publicKey!);
       const program = programForTx();
@@ -444,6 +505,34 @@ export function PoolDashboard() {
               </div>
             </div>
 
+            {needsStakeMigration && (
+              <div
+                style={{
+                  border: "1px solid rgba(248, 113, 113, 0.45)",
+                  borderRadius: "16px",
+                  padding: "0.85rem",
+                  background: "rgba(127, 29, 29, 0.25)",
+                  marginBottom: "1rem",
+                }}
+              >
+                <strong style={{ display: "block", marginBottom: "0.35rem" }}>
+                  Legacy stake account detected
+                </strong>
+                <span style={{ color: "var(--muted)", fontSize: "0.84rem" }}>
+                  Migrate once to restore deposit, withdraw, and claim actions after the lock
+                  upgrade. Your displayed stake balance is preserved.
+                </span>
+                <button
+                  className="btn-primary"
+                  style={{ width: "100%", marginTop: "0.75rem" }}
+                  disabled={busy || !anchorWallet || !initialized}
+                  onClick={migrateLegacyStake}
+                >
+                  Migrate stake account
+                </button>
+              </div>
+            )}
+
             <dl className="metric-list">
               <div className="metric">
                 <dt>Pool share</dt>
@@ -473,7 +562,7 @@ export function PoolDashboard() {
             <button
               className="btn-primary"
               style={{ width: "100%" }}
-              disabled={busy || !anchorWallet || !initialized}
+              disabled={busy || !anchorWallet || !initialized || needsStakeMigration}
               onClick={claim}
             >
               Claim MENTIK
@@ -494,7 +583,7 @@ export function PoolDashboard() {
               <select
                 value={lockTier}
                 onChange={(e) => setLockTier(e.target.value as LockTier)}
-                disabled={busy || !initialized}
+                disabled={busy || !initialized || needsStakeMigration}
                 style={{
                   width: "100%",
                   border: "1px solid var(--border)",
@@ -536,7 +625,7 @@ export function PoolDashboard() {
             </label>
             <button
               className="btn-primary"
-              disabled={busy || !anchorWallet || !initialized}
+              disabled={busy || !anchorWallet || !initialized || needsStakeMigration}
               onClick={deposit}
             >
               Deposit
@@ -556,7 +645,7 @@ export function PoolDashboard() {
             </label>
             <button
               className="btn-secondary"
-              disabled={busy || !anchorWallet || !initialized || isLocked}
+              disabled={busy || !anchorWallet || !initialized || isLocked || needsStakeMigration}
               onClick={withdraw}
             >
               Withdraw

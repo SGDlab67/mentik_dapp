@@ -1,15 +1,15 @@
 use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::pubkey::Pubkey;
 use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
-use mentik_sol_pool::state::{GlobalState, StakeAccount};
 use litesvm::LiteSVM;
+use mentik_sol_pool::state::{GlobalState, StakeAccount};
 use mentik_sol_pool::{
-    accounts, instruction,
+    accounts,
     constants::{
-        DAILY_EMISSION, GLOBAL_SEED, LOCK_30_DAYS, LOCK_7_DAYS, MENTIK_MINT_SEED, MINT_AUTHORITY_SEED,
-        SOL_VAULT_SEED, STAKE_SEED,
+        DAILY_EMISSION, GLOBAL_SEED, LOCK_30_DAYS, LOCK_7_DAYS, MENTIK_MINT_SEED,
+        MINT_AUTHORITY_SEED, SOL_VAULT_SEED, STAKE_SEED,
     },
-    ID,
+    instruction, ID,
 };
 use solana_address::Address;
 use solana_clock::Clock;
@@ -167,6 +167,23 @@ fn withdraw(svm: &mut LiteSVM, user: &Keypair, lamports: u64) -> Result<(), Stri
     send(svm, user, &[user], ix)
 }
 
+fn migrate_stake(svm: &mut LiteSVM, user: &Keypair) -> Result<(), String> {
+    let (stake_account, _) = pda(&[STAKE_SEED, signer_pk(user).as_ref()]);
+
+    let ix = Instruction {
+        program_id: program_pubkey(),
+        accounts: accounts::MigrateStake {
+            user: pk_addr(signer_pk(user)),
+            stake_account,
+            system_program: SYSTEM_PROGRAM,
+        }
+        .to_account_metas(None),
+        data: instruction::MigrateStake {}.data(),
+    };
+
+    send(svm, user, &[user], ix)
+}
+
 fn sync_pool(svm: &mut LiteSVM, payer: &Keypair) {
     let (global_state, _) = pda(&[GLOBAL_SEED]);
     let ix = Instruction {
@@ -203,8 +220,8 @@ fn create_ata(svm: &mut LiteSVM, payer: &Keypair, owner: &Pubkey, mint: &Pubkey)
     svm.expire_blockhash();
     let blockhash = svm.latest_blockhash();
     let msg = Message::new_with_blockhash(&[ix], Some(&payer.pubkey()), &blockhash);
-    let tx = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[payer])
-        .expect("ata tx");
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[payer]).expect("ata tx");
     svm.send_transaction(tx).expect("create ata");
     ata_addr
 }
@@ -437,4 +454,45 @@ fn lock_extension_uses_max() {
     let after_thirty = read_stake(&svm, &user).locked_until;
     assert_eq!(after_thirty, now + LOCK_30_DAYS as i64);
     assert!(after_thirty > after_seven);
+}
+
+#[test]
+fn legacy_stake_account_can_migrate_and_withdraw() {
+    let mut svm = LiteSVM::new();
+    svm.add_program(program_address(), &read_program_bytes())
+        .unwrap();
+
+    let authority = Keypair::new();
+    let user = Keypair::new();
+    svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    svm.airdrop(&user.pubkey(), 10_000_000_000).unwrap();
+
+    init_pool(&mut svm, &authority);
+    deposit(&mut svm, &user, 1_000_000_000, 0);
+
+    let (stake_account, _) = pda(&[STAKE_SEED, signer_pk(&user).as_ref()]);
+    let mut account = svm.get_account(&stake_account).expect("stake account");
+    let migrated_len = 8 + StakeAccount::INIT_SPACE;
+    assert_eq!(account.data.len(), migrated_len);
+
+    let legacy_len = migrated_len - 8;
+    account.data.truncate(legacy_len);
+    account.lamports = svm.minimum_balance_for_rent_exemption(legacy_len);
+    svm.set_account(stake_account, account)
+        .expect("install legacy stake account");
+
+    let withdraw_err = withdraw(&mut svm, &user, 100_000_000).unwrap_err();
+    assert!(
+        withdraw_err.to_lowercase().contains("deserialize"),
+        "expected legacy account to fail deserialization before migration, got: {withdraw_err}"
+    );
+
+    migrate_stake(&mut svm, &user).expect("migrate stake");
+
+    let migrated = read_stake(&svm, &user);
+    assert_eq!(migrated.sol_amount, 1_000_000_000);
+    assert_eq!(migrated.locked_until, 0);
+    assert_eq!(migrated.owner, signer_pk(&user));
+
+    withdraw(&mut svm, &user, 100_000_000).expect("withdraw after migration");
 }
