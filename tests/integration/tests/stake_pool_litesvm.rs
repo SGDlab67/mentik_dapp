@@ -1,6 +1,6 @@
 use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::pubkey::Pubkey;
-use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
+use anchor_lang::{AccountDeserialize, InstructionData, Space, ToAccountMetas};
 use litesvm::LiteSVM;
 use mentik_sol_pool::state::{GlobalState, StakeAccount};
 use mentik_sol_pool::{
