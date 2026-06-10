@@ -83,7 +83,7 @@ pub fn handler(ctx: Context<MigrateStake>) -> Result<()> {
     if current_lamports < required_lamports {
         transfer(
             CpiContext::new(
-                ctx.accounts.system_program.to_account_info(),
+                ctx.accounts.system_program.key(),
                 Transfer {
                     from: ctx.accounts.user.to_account_info(),
                     to: stake_info.clone(),
@@ -95,7 +95,7 @@ pub fn handler(ctx: Context<MigrateStake>) -> Result<()> {
         )?;
     }
 
-    stake_info.realloc(new_len, false)?;
+    stake_info.resize(new_len)?;
 
     let migrated = StakeAccount {
         bump: legacy.bump,
