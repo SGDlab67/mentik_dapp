@@ -36,6 +36,8 @@ export function parseAnchorError(err: unknown): string {
       return "Stake is locked — withdraw is blocked until the unlock time.";
     if (msg.includes("0x1775") || msg.includes("6005"))
       return "Invalid lock duration — choose Flexible, 7-day, or 30-day.";
+    if (msg.includes("0x1776") || msg.includes("6006"))
+      return "Stake account layout is not eligible for migration.";
     return msg;
   }
   return String(err);

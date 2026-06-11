@@ -344,6 +344,53 @@
       "args": []
     },
     {
+      "name": "migrate_stake",
+      "discriminator": [
+        178,
+        5,
+        26,
+        85,
+        56,
+        20,
+        153,
+        160
+      ],
+      "accounts": [
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "stake_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  107,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "sync_pool",
       "discriminator": [
         219,
@@ -530,6 +577,11 @@
       "code": 6005,
       "name": "InvalidLockDuration",
       "msg": "Invalid lock duration"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidStakeAccountLayout",
+      "msg": "Invalid stake account layout"
     }
   ],
   "types": [

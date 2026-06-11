@@ -14,4 +14,6 @@ pub enum PoolError {
     StakeLocked,
     #[msg("Invalid lock duration")]
     InvalidLockDuration,
+    #[msg("Invalid stake account layout")]
+    InvalidStakeAccountLayout,
 }
