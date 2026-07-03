@@ -23,6 +23,11 @@ const config: Config = {
     },
   },
   plugins: [],
+  corePlugins: {
+    // Preflight resets element defaults globally; the existing PoolDashboard
+    // uses hand-written CSS that relies on browser default spacing, so keep it off.
+    preflight: false,
+  },
 };
 
 export default config;

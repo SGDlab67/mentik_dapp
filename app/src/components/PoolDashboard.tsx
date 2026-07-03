@@ -393,6 +393,9 @@ export function PoolDashboard() {
                 Program offline
               </span>
             )}
+            <a href="/wallet" className="cluster-badge" style={{ textDecoration: "none" }}>
+              Yield app (beta) →
+            </a>
             {wallet.publicKey && (
               <span className="wallet-chip">{wallet.publicKey.toBase58().slice(0, 4)}…</span>
             )}

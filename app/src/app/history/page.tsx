@@ -5,6 +5,7 @@ import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { shortenPubkey } from "@/lib/solana";
 import { Spinner } from "@/components/ui/Spinner";
+import { Navbar } from "@/components/ui/Navbar";
 
 interface ParsedTx {
   signature: string;
@@ -31,7 +32,7 @@ export default function HistoryPage() {
 
         const txs: ParsedTx[] = sigs.map((s) => ({
           signature: s.signature,
-          blockTime: s.blockTime,
+          blockTime: s.blockTime ?? null,
           fee: 0,
           status: s.err ? "failed" : "success",
         }));
@@ -49,13 +50,21 @@ export default function HistoryPage() {
 
   if (!publicKey) {
     return (
-      <div className="py-32 text-center text-mentik-muted">
-        Connect your wallet to view transaction history.
-      </div>
+      <>
+        <Navbar />
+        <main className="mx-auto max-w-7xl px-4 py-8">
+          <div className="py-32 text-center text-mentik-muted">
+            Connect your wallet to view transaction history.
+          </div>
+        </main>
+      </>
     );
   }
 
   return (
+    <>
+      <Navbar />
+      <main className="mx-auto max-w-7xl px-4 py-8">
     <div>
       <h1 className="text-2xl font-bold text-white mb-6">
         Transaction History
@@ -114,5 +123,7 @@ export default function HistoryPage() {
         </div>
       )}
     </div>
+      </main>
+    </>
   );
 }

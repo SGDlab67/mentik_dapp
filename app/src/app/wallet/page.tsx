@@ -12,6 +12,7 @@ import { usePortfolio } from "@/hooks/usePortfolio";
 import { formatUsd, shortenPubkey } from "@/lib/solana";
 import { usePrices } from "@/hooks/usePrices";
 import { Spinner } from "@/components/ui/Spinner";
+import { Navbar } from "@/components/ui/Navbar";
 
 export default function WalletPage() {
   const { publicKey, sendTransaction } = useWallet();
@@ -27,9 +28,14 @@ export default function WalletPage() {
 
   if (!publicKey) {
     return (
-      <div className="py-32 text-center text-mentik-muted">
-        Connect your wallet to access send/receive features.
-      </div>
+      <>
+        <Navbar />
+        <main className="mx-auto max-w-7xl px-4 py-8">
+          <div className="py-32 text-center text-mentik-muted">
+            Connect your wallet to access send/receive features.
+          </div>
+        </main>
+      </>
     );
   }
 
@@ -64,6 +70,9 @@ export default function WalletPage() {
   };
 
   return (
+    <>
+      <Navbar />
+      <main className="mx-auto max-w-7xl px-4 py-8">
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-white">Wallet</h1>
 
@@ -145,5 +154,7 @@ export default function WalletPage() {
         )}
       </div>
     </div>
+      </main>
+    </>
   );
 }
